@@ -4,8 +4,13 @@
 
 ## 缓冲池 vs 数据页 vs 表空间 vs 段 vs 区 vs 数据行
 
-### 缓冲池（Buffer pool）
-内存
+### [缓冲池（Buffer pool）](https://dev.mysql.com/doc/refman/5.7/en/innodb-buffer-pool.html)
+
+**缓冲池**是主存中的一个区域，InnoDB 在访问时缓存表和索引数据。缓冲池允许直接从内存访问频繁使用的数据，加快处理速度。在数据库专用服务器上，高达80% 的物理内存通常分配给缓冲池。
+
+![](./innodb-buffer-pool-list.png)
+
+当 InnoDB 将一个页面读入缓冲池时，它首先将其插入到中点（Midpoint Insertion）(旧子列表的头部)。比如用户发起的操作(如 SQL 查询)所必需的，或者 InnoDB 自动执行的预读操作的一部分。随着数据库的运行，频繁访问的数据由缓冲池中old sublist移动到列表的head部，再移动到new sublist中。新旧子列表（new-old sublist）中的页面都会随着其他页面的更新而老化。旧子列表(old sublist)中的页面也会随着页面插入到中点而变老。最终，一个未使用的页面到达旧子列表的尾部并被驱逐。
 
 
 ### 表空间 vs 段 vs 区 vs 页 vs 数据行
