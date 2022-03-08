@@ -2,7 +2,150 @@
 
 本章节内容主要是针对InnoDB存储引擎进行介绍，其他存储引擎，例如MyISAM等不在此章节讨论范围内。
 
-## 缓冲池 vs 数据页 vs 表空间 vs 段 vs 区 vs 数据行
+## `INFORMATION_SCHEMA` 数据库 
+
+### `INNODB_TRX` 表
+`INNODB_TRX` 表提供了关于当前在 INNODB 引擎内部执行的每个事务的信息，包括事务是否正在等待锁定、事务何时开始以及事务执行的 SQL 语句(如果有的话)。
+
+示例：
+
+```sql
+$mysql> SELECT * FROM INFORMATION_SCHEMA.INNODB_TRX\G
+*************************** 1. row ***************************
+                    trx_id: 1510
+                 trx_state: RUNNING
+               trx_started: 2021-11-19 13:24:40
+     trx_requested_lock_id: NULL
+          trx_wait_started: NULL
+                trx_weight: 586739
+       trx_mysql_thread_id: 2
+                 trx_query: DELETE FROM employees.salaries WHERE salary > 65000
+       trx_operation_state: updating or deleting
+         trx_tables_in_use: 1
+         trx_tables_locked: 1
+          trx_lock_structs: 3003
+     trx_lock_memory_bytes: 450768
+           trx_rows_locked: 1407513
+         trx_rows_modified: 583736
+   trx_concurrency_tickets: 0
+       trx_isolation_level: REPEATABLE READ
+         trx_unique_checks: 1
+    trx_foreign_key_checks: 1
+trx_last_foreign_key_error: NULL
+ trx_adaptive_hash_latched: 0
+ trx_adaptive_hash_timeout: 10000
+          trx_is_read_only: 0
+trx_autocommit_non_locking: 0
+```
+
+
+- `TRX_ID`
+
+  事物ID。这些事务不是为只读和非锁定的事务创建的。详情请参阅第8.5.3节“优化 InnoDB 只读事务”。
+
+- `TRX_WEIGHT`
+
+  事物权重，反映事物影响的行数（比如：修改的行数和事物锁定的行数）。为了解决死锁，InnoDB 选择权重最小的事务作为"牺牲品"进行回滚。无论更改和锁定的行数多少，已更改非事务性表的事务都被认为比其他事务更重。 
+
+- `TRX_STATE`
+
+  事物执行状态，`RUNNING`, `LOCK WAIT`, `ROLLING BACK`, 和 `COMMITTING` 状态。
+
+- `TRX_STARTED`
+
+  事物开始时间
+
+- `TRX_REQUESTED_LOCK_ID`
+
+  当前事务正在等待的事务锁ID，如果 `TRX_STATE` 是 `LOCK WAIT`或者`NUll`。若要获取关于锁的详细信息，请将此列与`INNODB_LOCKS`表的`LOCK_ID`列联接起来。
+
+- `TRX_WAIT_STARTED`
+
+  事务开始等待锁的时间，如果 `TRX_STATE` 是 `LOCK WAIT`或者`NUll`。
+
+- `TRX_MYSQL_THREAD_ID`
+
+  mysql线程ID， 如果想获取更多详细信息，可以结合`INFORMATION_SCHEMA.PROCESSLIST`表的`ID`列查看。
+
+- `TRX_QUERY`
+
+  当前事务正在执行的SQL语句
+
+- `TRX_OPERATION_STATE`
+  
+  当前事务操作
+
+- `TRX_TABLES_IN_USE`
+  
+  处理此事务的当前 SQL 语句时使用的 InnoDB 表的数量。
+
+- `TRX_TABLES_LOCKED`
+  
+  当前 SQL 语句上有行锁的 InnoDB 表的数量。(因为这些是行锁，而不是表锁，所以通常仍然可以由多个事务读取和写入表，尽管有些行被锁定。)
+
+- `TRX_LOCK_STRUCTS`
+  
+  事务保留的锁的数量。
+
+- `TRX_LOCK_MEMORY_BYTES`
+  
+  内存中此事务的锁结构占用的总大小。
+
+- `TRX_ROWS_LOCKED`
+  
+  此事务锁定的大约行数。该值可能包括物理上存在但事务不可见的已删除标记的行。虽然列提到了“表”，但它并不是字面上的表锁，而是事务中包含一个或多个 InnoDB 行锁的表的数量。
+
+- `TRX_ROWS_MODIFIED`
+
+  此事务中已修改和插入的行数。
+
+- `TRX_CONCURRENCY_TICKETS`
+  
+  一个值，指示当前事务在交换出去之前可以做多少工作，由 `innodb_concurrency_tickets` 系统变量指定。
+
+- `TRX_ISOLATION_LEVEL`
+
+  当前事务的隔离级别。
+
+- `TRX_UNIQUE_CHECKS`
+ 
+  当前事务是否打开或关闭唯一检查。例如，它们可能在大容量数据加载期间被关闭。
+
+- `TRX_FOREIGN_KEY_CHECKS`
+  
+  当前事务是否打开或关闭外键检查。例如，它们可能在大容量数据加载期间被关闭。
+
+- `TRX_LAST_FOREIGN_KEY_ERROR`
+  
+  最后一个外键错误(如果有的话)的详细错误消息; 否则为 NULL。
+
+- `TRX_ADAPTIVE_HASH_LATCHED`
+  
+  当前事务是否锁定自适应哈希索引。当对自适应哈希索引搜索系统进行分区时，单个事务不锁定整个自适应哈希索引。自适应哈希索引分区由 innodb _ Adaptive _ hash _ index _ parts 控制，默认设置为8。
+
+- `TRX_ADAPTIVE_HASH_TIMEOUT`
+  
+  是否立即放弃自适应哈希索引的搜索锁，或者保留对Mysql的调用。当没有自适应哈希索引争用时，该值保持为零，并且语句在完成之前保留搜索锁。在锁竞争期间，它将计数为零，语句在每次行查找到后立即释放锁。对自适应哈希索引搜索系统进行分区(由 `innodb_adaptive_hash_index_parts` 控制)时，其值保持为0。
+
+- `TRX_IS_READ_ONLY`
+  
+  该值为 1 代表事务只读。
+
+- `TRX_AUTOCOMMIT_NON_LOCKING`
+  
+  值为1表示该事务是一个 `SELECT` 语句，该语句不使用 `FOR UPDATE `或 `LOCK IN SHARED MODE` 子句，并且在启用自动提交的情况下执行，因此该事务只包含这一条语句。当这个列和`TRX_IS_READ_ONLY`的值都为1时，InnoDB 优化事务以减少与更改表数据的事务相关的开销。
+
+
+> **注意事项**
+>  - 使用此表可帮助诊断在重并发负载期间发生的性能问题。其内容更新如第14.16.2.3节“ InnoDB 事务和锁定信息的持久性和一致性”所述。
+>  - 必须具有 PROCESS 特权才能查询此表。
+>  - 使用 `information_schema.COLUMNS` 表或 `SHOW COLUMNS` 语句查看有关此表列的其他信息，包括数据类型和默认值。
+
+
+
+
+
+## 附录：缓冲池 vs 数据页 vs 表空间 vs 段 vs 区 vs 数据行
 
 ### [缓冲池（Buffer pool）](https://dev.mysql.com/doc/refman/5.7/en/innodb-buffer-pool.html)
 
@@ -57,5 +200,5 @@ school VARCHAR(50)
 
 **数据段(segment)**：段(Segment)分为索引段，数据段，回滚段等。其中索引段就是非叶子结点部分，而数据段就是叶子结点部分，回滚段用于数据的回滚和多版本控制。一个段包含256个区(256M大小)。​ 一个段包含256个区
 
-**表空间(tablespace)**：为磁盘空间一组逻辑上的空间区域。 当我们创建一个表之后，在磁盘上会有对应的表名称.ibd的磁盘文件。表空间的磁盘文件里面有很多的数据页，一个数据页最多16kb，因为不可能一个数据页一个磁盘文件，所以数据区的概念引入了。每个表空间就是对应了磁盘上的数据文件，在表空间里有很多组数据区，一组数据区是256个数据区， 每个数据区包含了64个数据页，是1mb  
+**表空间(tablespace)**：为磁盘空间一组逻辑上的空间区域。 当我们创建一个表之后，在磁盘上会有对应的表名称.ibd的磁盘文件。表空间的磁盘文件里面有很多的数据页，一个数据页最多16kb，因为不可能一个数据页一个磁盘文件，所以数据区的概念引入了。每个表空间就是对应了磁盘上的数据文件，在表空间里有很多组数据区，一组数据区是256个数据区， 每个数据区包含了64个数据页，是1mb   
 
